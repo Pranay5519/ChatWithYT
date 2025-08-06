@@ -1,59 +1,65 @@
-# app.py
+# main.py
 
-import streamlit as st
-from main import (
-    load_transcript,
-    text_splitter,
-    generate_embeddings,
-    retriever_docs,
-    generation_chain,
-)
+import re
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_core.prompts import PromptTemplate
+from langchain_core.runnables import RunnableParallel, RunnablePassthrough, RunnableLambda
+from langchain_core.output_parsers import StrOutputParser
+from langchain_google_genai import ChatGoogleGenerativeAI
 
-# --- Session state initialization ---
-if "vector_store" not in st.session_state:
-    st.session_state.vector_store = None
 
-if "retriever" not in st.session_state:
-    st.session_state.retriever = None
+def load_transcript(url: str) -> str | None:
+    pattern = r'(?:v=|\/)([0-9A-Za-z_-]{11})'
+    match = re.search(pattern, url)
+    if match:
+        try:
+            video_id = match.group(1)
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=["en"])
+            return " ".join(chunk["text"] for chunk in transcript_list)
+        except TranscriptsDisabled:
+            return None
+    return None
 
-if "chat_chain" not in st.session_state:
-    st.session_state.chat_chain = None
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+def text_splitter(transcript):
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    return splitter.create_documents([transcript])
 
-# --- Sidebar for URL input ---
-st.sidebar.title("YouTube Video")
-url = st.sidebar.text_input("Enter YouTube Video URL:")
-if st.sidebar.button("Load Transcript"):
-    transcript = load_transcript(url)
-    if transcript:
-        chunks = text_splitter(transcript)
-        st.session_state.vector_store = generate_embeddings(chunks)
-        st.session_state.retriever = retriever_docs(st.session_state.vector_store)
-        st.session_state.chat_chain = generation_chain(st.session_state.retriever)
-        st.success("✅ Transcript loaded and chatbot is ready!")
-    else:
-        st.error("❌ Could not load transcript.")
 
-# --- Main Chat UI ---
-st.title("🎥 YouTube ChatBot")
+def generate_embeddings(chunks):
+    embeddings = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')
+    return FAISS.from_documents(chunks, embeddings)
 
-if st.session_state.retriever:
 
-    # Show history of Chats
-    for msg in st.session_state.messages:
-       # st.write("---____------____-----____")
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-    
-    user_input = st.chat_input("Ask a question about the video:")
-    if user_input:
-        st.session_state.messages.append({"role": "user", "content": user_input})
-        with st.chat_message("user"):
-            st.markdown(user_input)
+def retriever_docs(vector_store):
+    return vector_store.as_retriever(search_type='similarity', search_kwargs={"k": 3})
 
-        with st.chat_message("assistant"):
-            response = st.session_state.chat_chain.invoke(user_input)
-            st.markdown(response)
-            st.session_state.messages.append({"role": "assistant", "content": response})
+
+def format_docs(retrieved_docs):
+    return "\n\n".join(doc.page_content for doc in retrieved_docs)
+
+
+def generation_chain(retriever):
+    prompt = PromptTemplate(
+        template="""
+        You are a helpful assistant.
+        Answer ONLY from the provided transcript context.
+        If the context is insufficient, just say you don't know.
+
+        {context}
+        Question: {question}
+        """,
+        input_variables=['context', 'question']
+    )
+
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+
+    parallel_chain = RunnableParallel({
+        "context": retriever | RunnableLambda(format_docs),
+        "question": RunnablePassthrough()
+    })
+
+    return parallel_chain | prompt | llm | StrOutputParser()

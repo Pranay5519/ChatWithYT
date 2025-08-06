@@ -45,22 +45,12 @@ def format_docs(retrieved_docs):
 def generation_chain(retriever):
     prompt = PromptTemplate(
         template="""
-        You are a smart and concise summarizer.
+        You are a helpful assistant.
+        Answer ONLY from the provided transcript context.
+        If the context is insufficient, just say you don't know.
 
-            Your job is to answer the user questions based on the transcript below 
-
-            INSTRUCTIONS:
-            - Do NOT add anything that is not in the transcript.
-            - Summarize the key points, main ideas, and arguments in simple language.
-            - Make the summary easy to read with bullet points or paragraphs.
-            - If the transcript is mostly irrelevant or too short, just say: "Not enough information to summarize."
-
-            Transcript:
-            {context}
-
-            Question : 
-            {question}
-
+        {context}
+        Question: {question}
         """,
         input_variables=['context', 'question']
     )
