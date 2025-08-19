@@ -43,3 +43,8 @@
 ```bash
 git clone https://github.com/your-username/chatwithyt.git
 cd chatwithyt
+
+
+ArchitecTure
+<img width="1838" height="538" alt="image" src="https://github.com/user-attachments/assets/7a1b5d44-40c9-4570-8386-34c4a88b3f60" />
+
